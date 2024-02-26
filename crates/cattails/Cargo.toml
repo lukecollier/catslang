@@ -1,0 +1,21 @@
+[package]
+name = "cattails"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.80"
+clap = { version = "4.5.1", features = ["derive"] }
+concurrent-map = "5.0.33"
+dirs = "5.0.1"
+fst = { version = "0.4.7", features = ["levenshtein"] }
+libsql = "0.2.0"
+log = { version = "0.4.20", features = ["kv_unstable", "kv_unstable_serde"] }
+lsp-server = "0.7.6"
+lsp-types = "0.95.0"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+sqlparser = "0.43.1"
+structured-logger = "1.0.3"
+tree-sitter = "0.19.5"
+tree-sitter-sql = "0.0.2"
