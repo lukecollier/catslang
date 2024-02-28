@@ -5,7 +5,7 @@ use std::hash::Hash as StdHash;
 
 use crate::ast;
 
-use crate::eval::Environment;
+use crate::eval::{Environment, System};
 
 // Todo: Wouldn't it be neat to not use object wrapper
 #[derive(Eq, PartialEq, Clone)]
@@ -64,7 +64,7 @@ impl Object {
 
     pub fn builtin(
         name: std::string::String,
-        func: fn(Vec<Object>) -> anyhow::Result<Object>,
+        func: fn(Vec<Object>, &mut dyn System) -> anyhow::Result<Object>,
     ) -> Object {
         Object::BuiltinFn(BuiltinFunction { name, func })
     }
@@ -259,7 +259,7 @@ impl Display for Integer {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BuiltinFunction {
     pub name: std::string::String,
-    pub func: fn(Vec<Object>) -> anyhow::Result<Object>,
+    pub func: fn(Vec<Object>, &mut dyn System) -> anyhow::Result<Object>,
 }
 impl Display for BuiltinFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

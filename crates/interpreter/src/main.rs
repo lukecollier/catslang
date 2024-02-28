@@ -1,13 +1,13 @@
 use crossterm::{
     cursor::{MoveLeft, MoveRight, MoveToColumn, MoveToNextLine},
     event::*,
-    execute,
+    execute, queue,
     style::{Print, Stylize},
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 use meow::{
     ast::Program,
-    eval::{Environment, Eval},
+    eval::{Environment, Eval, System},
     lexer, parser,
 };
 use std::io::{self, Stdout};
@@ -28,12 +28,75 @@ fn parse(src: &String) -> Result<Program, String> {
     }
 }
 
-// todo: this seem's like the best way to handle all this
-// unfortunately the render state is different from the state
-// so we need a way to sync it
+// note: This ends up being our presentation layer, it has convinience methods for writing to the
+// terminal.
+// thanks to the seperation of concerns we can provide channels at construction for eventing.
+// The events would allow us to handle async which we can support using something like io_uring,
+// neato!
+struct CrosstermTerminal<'a> {
+    pub stdout: &'a mut Stdout,
+}
+
+impl<'a> CrosstermTerminal<'a> {
+    fn from_stdout(stdout: &'a mut Stdout) -> Self {
+        Self { stdout }
+    }
+
+    fn move_left(&mut self, by: u16) -> std::io::Result<()> {
+        execute!(self.stdout, MoveLeft(by))?;
+        Ok(())
+    }
+
+    fn move_right(&mut self, by: u16) -> std::io::Result<()> {
+        execute!(self.stdout, MoveRight(by))?;
+        Ok(())
+    }
+
+    fn execute(&mut self, input: String, repl: &mut Repl) -> std::io::Result<()> {
+        queue!(
+            self.stdout,
+            MoveToNextLine(1),
+            Clear(ClearType::CurrentLine),
+            Print(format!(">> {input}\r\n")),
+        )?;
+        let result = match repl.run(self) {
+            Ok(success) => success.to_string().dark_grey(),
+            Err(err) => err.to_string().dark_red().bold(),
+        };
+        queue!(
+            self.stdout,
+            MoveToNextLine(1),
+            Clear(ClearType::CurrentLine),
+            Print(result),
+            Print("\r\n"),
+        )?;
+        Ok(())
+    }
+
+    fn prompt(&mut self, input: &str, column: u16) -> std::io::Result<()> {
+        execute!(
+            self.stdout,
+            MoveToColumn(0),
+            Clear(ClearType::UntilNewLine),
+            Print(PROMPT.dark_yellow().bold()),
+            Print(input),
+            MoveToColumn(column + PROMPT.len() as u16),
+        )?;
+        Ok(())
+    }
+}
+
+impl<'a> System for CrosstermTerminal<'a> {
+    fn println(&mut self, line: &str) -> std::io::Result<()> {
+        execute!(self.stdout, Print(line), Print("\r\n"))?;
+        Ok(())
+    }
+}
+
 struct Repl {
     history: Vec<String>,
     input: String,
+    stashed: String,
     history_cursor: usize,
     column: usize,
     env: Environment,
@@ -44,12 +107,14 @@ impl Repl {
     fn new() -> Self {
         let history = Vec::with_capacity(1024);
         let input = String::new();
+        let stashed = String::new();
         let history_cursor = 0;
         let column = 0;
         let env = Environment::new();
         Self {
             history,
             input,
+            stashed,
             history_cursor,
             column,
             env,
@@ -63,9 +128,9 @@ impl Repl {
         self.column = 0;
     }
 
-    pub fn run(&mut self) -> Result<String, String> {
+    pub fn run<S: System>(&mut self, runtime: &mut S) -> Result<String, String> {
         match parse(&self.input) {
-            Ok(parsed) => match parsed.eval(&mut self.env) {
+            Ok(parsed) => match parsed.eval(&mut self.env, runtime) {
                 Ok(eval) => {
                     self.reset_input();
                     Ok(format!("{eval}"))
@@ -84,7 +149,7 @@ impl Repl {
 
     pub fn update_input(&mut self, new: String) {
         self.input = new;
-        self.column = self.input.len() - 1;
+        self.column = self.input.len();
     }
 
     pub fn delete_last(&mut self) {
@@ -119,6 +184,9 @@ impl Repl {
 
     // goes backwards in hisotory
     pub fn history_back(&mut self) {
+        if self.history_cursor == self.history.len() {
+            self.stashed = self.input.clone();
+        }
         self.history_cursor = self.history_cursor.checked_sub(1).unwrap_or(0);
         match self.history.get(self.history_cursor) {
             Some(line) => {
@@ -135,6 +203,9 @@ impl Repl {
             .checked_add(1)
             .unwrap_or(self.history.len())
             .clamp(0, self.history.len());
+        if self.history_cursor == self.history.len() {
+            self.update_input(self.stashed.clone());
+        }
         match self.history.get(self.history_cursor) {
             Some(line) => {
                 self.update_input(line.clone());
@@ -167,39 +238,47 @@ impl Repl {
     pub fn column(&self) -> u16 {
         self.column.try_into().unwrap()
     }
-
-    pub fn render(&self, stdout: &mut Stdout) -> io::Result<()> {
-        execute!(
-            stdout,
-            MoveToColumn(0),
-            Clear(ClearType::UntilNewLine),
-            Print(PROMPT.dark_yellow().bold()),
-            Print(self.input()),
-            MoveToColumn(self.column() + PROMPT.len() as u16),
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use meow::eval::InMemorySystem;
+
     use super::*;
+    fn test_repl() -> Repl {
+        let history = Vec::with_capacity(1024);
+        let input = String::new();
+        let stashed = String::new();
+        let history_cursor = 0;
+        let column = 0;
+        let env = Environment::new();
+        Repl {
+            history,
+            input,
+            stashed,
+            history_cursor,
+            column,
+            env,
+        }
+    }
+
     #[test]
     fn test_initial_state() {
-        let repl = Repl::new();
+        let repl = test_repl();
         let init = repl.input();
         assert_eq!(init, "");
     }
 
     #[test]
     fn can_go_back_and_forward_in_history() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
+        let mut in_memory = InMemorySystem::new();
         repl.add_str("let a = 1;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.add_str("let b = 2;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.add_str("let c = 3;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.history_back();
         repl.history_back();
         repl.history_back();
@@ -209,13 +288,14 @@ mod tests {
 
     #[test]
     fn can_get_two_history_back() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
+        let mut in_memory = InMemorySystem::new();
         repl.add_str("let a = 1;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.add_str("let b = 2;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.add_str("let c = 3;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.history_back();
         repl.history_back();
         assert_eq!(repl.input(), "let b = 2;");
@@ -223,16 +303,17 @@ mod tests {
 
     #[test]
     fn can_get_one_history_back() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
+        let mut in_memory = InMemorySystem::new();
         repl.add_str("let f = 1;");
-        repl.run().unwrap();
+        repl.run(&mut in_memory).unwrap();
         repl.history_back();
         assert_eq!(repl.input(), "let f = 1;");
     }
 
     #[test]
     fn when_at_start_of_line_and_delete_ok() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -247,7 +328,7 @@ mod tests {
 
     #[test]
     fn can_insert_characters_inbetween_line() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -264,7 +345,7 @@ mod tests {
 
     #[test]
     fn can_delete_line_after_moving() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -281,7 +362,7 @@ mod tests {
 
     #[test]
     fn can_delete_line_after_moving_right() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -298,7 +379,7 @@ mod tests {
 
     #[test]
     fn can_delete_line() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -312,7 +393,7 @@ mod tests {
 
     #[test]
     fn can_delete_characters() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -323,7 +404,7 @@ mod tests {
 
     #[test]
     fn can_delete_characters_half_way_through() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -336,7 +417,7 @@ mod tests {
 
     #[test]
     fn can_add_characters() {
-        let mut repl = Repl::new();
+        let mut repl = test_repl();
         repl.add_ch('a');
         repl.add_ch('b');
         repl.add_ch('c');
@@ -356,9 +437,10 @@ fn main() -> io::Result<()> {
         Print("Meow!\n\r".bold().dark_magenta()),
         Print("<ctrl + c> to exit.\n\r"),
     )?;
+    let mut runtime = CrosstermTerminal::from_stdout(&mut stdout);
     let mut repl = Repl::new();
     loop {
-        repl.render(&mut stdout)?;
+        runtime.prompt(repl.input(), repl.column())?;
         match read()? {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -374,7 +456,7 @@ fn main() -> io::Result<()> {
                 kind: KeyEventKind::Press,
                 state: _,
             }) => {
-                execute!(stdout, MoveRight(repl.right()))?;
+                runtime.move_right(repl.right())?;
                 ()
             }
             Event::Key(KeyEvent {
@@ -383,7 +465,7 @@ fn main() -> io::Result<()> {
                 kind: KeyEventKind::Press,
                 state: _,
             }) => {
-                execute!(stdout, MoveLeft(repl.left()))?;
+                runtime.move_left(repl.left())?;
                 ()
             }
             Event::Key(KeyEvent {
@@ -416,24 +498,7 @@ fn main() -> io::Result<()> {
                 modifiers: KeyModifiers::NONE,
                 kind: KeyEventKind::Press,
                 state: _,
-            }) => {
-                let question = repl.input().to_string();
-                let result = match repl.run() {
-                    Ok(success) => success.dark_grey(),
-                    Err(err) => err.dark_red().bold(),
-                };
-                execute!(
-                    stdout,
-                    MoveToNextLine(1),
-                    Clear(ClearType::CurrentLine),
-                    Print(question),
-                    Print("\r\n"),
-                    MoveToNextLine(1),
-                    Clear(ClearType::CurrentLine),
-                    Print(result),
-                    Print("\r\n"),
-                )?;
-            }
+            }) => runtime.execute(repl.input().to_string(), &mut repl)?,
             Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE,

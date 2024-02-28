@@ -44,87 +44,125 @@ impl Environment {
         }
     }
 }
+
+pub trait System {
+    fn println(&mut self, line: &str) -> std::io::Result<()>;
+}
+
+pub struct InMemorySystem {
+    stdout: Vec<String>,
+}
+impl InMemorySystem {
+    pub fn new() -> Self {
+        Self { stdout: vec![] }
+    }
+}
+impl System for InMemorySystem {
+    fn println(&mut self, line: &str) -> std::io::Result<()> {
+        self.stdout.push(line.to_string());
+        std::io::Result::Ok(())
+    }
+}
+
 pub trait Eval {
-    fn eval(&self, env: &mut Environment) -> Result<Object>;
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object>;
 }
 
 fn lookup_inbuilt_function(name: &str) -> Option<Object> {
     match name {
-        "len" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            if args.len() != 1 {
-                return Err(anyhow!(
-                    "wrong number of arguments. got={}, want=1",
-                    args.len()
-                ));
-            }
-            match &args[0] {
-                Object::String(s) => Ok(Object::int(s.value.len() as i64)),
-                Object::Array(array) => Ok(Object::int(array.elements.len() as i64)),
-                obj => Err(anyhow!("argument to `len` not supported, got {:?}", obj)),
-            }
-        })),
-        "first" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            if args.len() != 1 {
-                return Err(anyhow!(
-                    "wrong number of arguments. got={}, want=1",
-                    args.len()
-                ));
-            }
-            match &args[0] {
-                Object::Array(array) => {
-                    Ok(array.elements.first().unwrap_or(&Object::Null).to_owned())
+        "len" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, _sys| {
+                if args.len() != 1 {
+                    return Err(anyhow!(
+                        "wrong number of arguments. got={}, want=1",
+                        args.len()
+                    ));
                 }
-                obj => Err(anyhow!("argument to `first` not supported, got {:?}", obj)),
-            }
-        })),
-        "last" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            if args.len() != 1 {
-                return Err(anyhow!(
-                    "wrong number of arguments. got={}, want=1",
-                    args.len()
-                ));
-            }
-            match &args[0] {
-                Object::Array(array) => {
-                    Ok(array.elements.last().unwrap_or(&Object::Null).to_owned())
+                match &args[0] {
+                    Object::String(s) => Ok(Object::int(s.value.len() as i64)),
+                    Object::Array(array) => Ok(Object::int(array.elements.len() as i64)),
+                    obj => Err(anyhow!("argument to `len` not supported, got {:?}", obj)),
                 }
-                obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
-            }
-        })),
-        "rest" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            if args.len() != 1 {
-                return Err(anyhow!(
-                    "wrong number of arguments. got={}, want=1",
-                    args.len()
-                ));
-            }
-            match &args[0] {
-                Object::Array(array) => Ok(Object::array(array.elements[1..].to_vec())),
-                obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
-            }
-        })),
-        "push" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            if args.len() != 2 {
-                return Err(anyhow!(
-                    "wrong number of arguments. got={}, want=2",
-                    args.len()
-                ));
-            }
-            match &args[0] {
-                Object::Array(array) => {
-                    let mut new_elements = array.elements.clone();
-                    new_elements.push(args[1].clone());
-                    Ok(Object::array(new_elements))
+            },
+        )),
+        "first" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, _sys| {
+                if args.len() != 1 {
+                    return Err(anyhow!(
+                        "wrong number of arguments. got={}, want=1",
+                        args.len()
+                    ));
                 }
-                obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
-            }
-        })),
-        "puts" => Some(Object::builtin(name.to_string(), |args: Vec<Object>| {
-            for arg in args {
-                println!("{}", arg);
-            }
-            Ok(Object::Null)
-        })),
+                match &args[0] {
+                    Object::Array(array) => {
+                        Ok(array.elements.first().unwrap_or(&Object::Null).to_owned())
+                    }
+                    obj => Err(anyhow!("argument to `first` not supported, got {:?}", obj)),
+                }
+            },
+        )),
+        "last" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, _sys| {
+                if args.len() != 1 {
+                    return Err(anyhow!(
+                        "wrong number of arguments. got={}, want=1",
+                        args.len()
+                    ));
+                }
+                match &args[0] {
+                    Object::Array(array) => {
+                        Ok(array.elements.last().unwrap_or(&Object::Null).to_owned())
+                    }
+                    obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
+                }
+            },
+        )),
+        "rest" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, _sys| {
+                if args.len() != 1 {
+                    return Err(anyhow!(
+                        "wrong number of arguments. got={}, want=1",
+                        args.len()
+                    ));
+                }
+                match &args[0] {
+                    Object::Array(array) => Ok(Object::array(array.elements[1..].to_vec())),
+                    obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
+                }
+            },
+        )),
+        "push" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, _sys| {
+                if args.len() != 2 {
+                    return Err(anyhow!(
+                        "wrong number of arguments. got={}, want=2",
+                        args.len()
+                    ));
+                }
+                match &args[0] {
+                    Object::Array(array) => {
+                        let mut new_elements = array.elements.clone();
+                        new_elements.push(args[1].clone());
+                        Ok(Object::array(new_elements))
+                    }
+                    obj => Err(anyhow!("argument to `last` not supported, got {:?}", obj)),
+                }
+            },
+        )),
+        "puts" => Some(Object::builtin(
+            name.to_string(),
+            |args: Vec<Object>, sys| {
+                for arg in args {
+                    sys.println(&arg.to_string())?;
+                }
+                Ok(Object::Null)
+            },
+        )),
         _ => None,
     }
 }
@@ -140,8 +178,8 @@ fn lookup_inbuilt_function(name: &str) -> Option<Object> {
 // }
 
 impl Eval for PrefixExpression {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
-        match (&self.operator, self.right.eval(env)?) {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
+        match (&self.operator, self.right.eval(env, sys)?) {
             (crate::ast::PrefixOperator::Minus, Object::Int(Integer { value })) => {
                 Ok(Object::Int(Integer { value: -value }))
             }
@@ -232,8 +270,12 @@ fn eval_infix_strings(
 }
 
 impl Eval for InfixExpression {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
-        match (self.left.eval(env)?, &self.operator, self.right.eval(env)?) {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
+        match (
+            self.left.eval(env, sys)?,
+            &self.operator,
+            self.right.eval(env, sys)?,
+        ) {
             (Object::Int(left), op, Object::Int(right)) => Ok(eval_infix_integers(left, op, right)),
             (Object::String(left), op, Object::String(right)) => {
                 eval_infix_strings(left, op, right)
@@ -248,10 +290,10 @@ impl Eval for InfixExpression {
 }
 
 impl Eval for BlockStatement {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         let mut result = Object::Null;
         for stmt in &self.statements {
-            match stmt.eval(env)? {
+            match stmt.eval(env, sys)? {
                 // TODO: this is iind of gross, maybe theres a cooler way to return
                 // object could have a "interupt" flag we can set that's ready here
                 obj @ Object::Return(_) => return Ok(obj),
@@ -263,21 +305,21 @@ impl Eval for BlockStatement {
 }
 
 impl Eval for IfExpression {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
-        let condition = self.condition.eval(env)?;
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
+        let condition = self.condition.eval(env, sys)?;
         match condition {
-            Object::Int(_) => self.consequence.eval(env),
-            Object::Bool(Boolean::True) => self.consequence.eval(env),
-            Object::Bool(Boolean::False) => self.alternative.eval(env),
-            Object::Null => self.alternative.eval(env),
+            Object::Int(_) => self.consequence.eval(env, sys),
+            Object::Bool(Boolean::True) => self.consequence.eval(env, sys),
+            Object::Bool(Boolean::False) => self.alternative.eval(env, sys),
+            Object::Null => self.alternative.eval(env, sys),
             rest => Ok(rest),
         }
     }
 }
 
 impl Eval for IndexExpression {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
-        match (self.left.eval(env)?, self.right.eval(env)?) {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
+        match (self.left.eval(env, sys)?, self.right.eval(env, sys)?) {
             (Object::Array(arr), Object::Int(Integer { value })) => {
                 if value < 0 || value >= arr.elements.len() as i64 {
                     return Ok(Object::Null);
@@ -298,11 +340,11 @@ impl Eval for IndexExpression {
 
 // todo: Can we derive eval if the constituants implement eval? :think:
 impl Eval for Expression {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         match self {
-            Expression::PrefixExpression(prefix_expr) => prefix_expr.eval(env),
-            Expression::InfixExpression(infix_expr) => infix_expr.eval(env),
-            Expression::Identifier(identifier) => identifier.eval(env),
+            Expression::PrefixExpression(prefix_expr) => prefix_expr.eval(env, sys),
+            Expression::InfixExpression(infix_expr) => infix_expr.eval(env, sys),
+            Expression::Identifier(identifier) => identifier.eval(env, sys),
             Expression::StringLiteral(string_literal) => {
                 Ok(Object::string(string_literal.value.to_string()))
             }
@@ -315,54 +357,58 @@ impl Eval for Expression {
             Expression::IntegerLiteral(literal) => Ok(Object::Int(Integer {
                 value: literal.value,
             })),
-            Expression::FunctionLiteral(function_literal) => function_literal.eval(env),
+            Expression::FunctionLiteral(function_literal) => function_literal.eval(env, sys),
             Expression::ArrayLiteral(literal) => {
-                let elements = eval_expressions(&literal.elements, env)?;
+                let elements = eval_expressions(&literal.elements, env, sys)?;
                 Ok(Object::array(elements))
             }
             Expression::HashLiteral(literal) => {
                 let mut hash_map: HashMap<HashObject, Object> = HashMap::new();
                 for (key, value) in literal.pairs.iter() {
-                    let key = key.eval(env)?;
-                    let value = value.eval(env)?;
+                    let key = key.eval(env, sys)?;
+                    let value = value.eval(env, sys)?;
                     hash_map.insert(key.try_into()?, value);
                 }
                 Ok(Object::hash_map(hash_map))
             }
-            Expression::IndexExpression(index) => index.eval(env),
+            Expression::IndexExpression(index) => index.eval(env, sys),
             Expression::CallExpression(call) => {
-                let callee = call.function.eval(env)?;
+                let callee = call.function.eval(env, sys)?;
 
                 match callee {
                     Object::Fn(func) => {
                         let mut enclosed = func.env.enclose();
                         for (name, stmt) in func.parameters.iter().zip(&call.arguments) {
-                            enclosed.set(name.value.to_string(), stmt.eval(env)?);
+                            enclosed.set(name.value.to_string(), stmt.eval(env, sys)?);
                         }
-                        func.body.eval(&mut enclosed)
+                        func.body.eval(&mut enclosed, sys)
                     }
                     Object::BuiltinFn(builtin) => {
                         let params = call
                             .arguments
                             .iter()
-                            .map(|arg| arg.eval(env))
+                            .map(|arg| arg.eval(env, sys))
                             .collect::<Result<Vec<_>>>()?;
-                        (builtin.func)(params)
+                        (builtin.func)(params, sys)
                     }
                     obj => Err(anyhow!("not a function: {:?}", obj)),
                 }
             }
-            Expression::IfExpression(if_expr) => if_expr.eval(env),
+            Expression::IfExpression(if_expr) => if_expr.eval(env, sys),
         }
     }
 }
 
-fn eval_expressions(expressions: &Vec<Expression>, env: &mut Environment) -> Result<Vec<Object>> {
-    expressions.iter().map(|expr| expr.eval(env)).collect()
+fn eval_expressions<S: System>(
+    expressions: &Vec<Expression>,
+    env: &mut Environment,
+    sys: &mut S,
+) -> Result<Vec<Object>> {
+    expressions.iter().map(|expr| expr.eval(env, sys)).collect()
 }
 
 impl Eval for Identifier {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         let builtin = lookup_inbuilt_function(self.value.as_str());
         builtin
             .or(env.get(&self.value))
@@ -371,7 +417,7 @@ impl Eval for Identifier {
 }
 
 impl Eval for FunctionLiteral {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         Ok(Object::func_with_env(
             self.paramaters.to_vec(),
             self.body.clone(),
@@ -385,34 +431,34 @@ impl Eval for FunctionLiteral {
 }
 
 impl Eval for Callee {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         match self {
-            Callee::FunctionLiteral(function_literal) => function_literal.eval(env),
-            Callee::Identifier(identifier) => identifier.eval(env),
+            Callee::FunctionLiteral(function_literal) => function_literal.eval(env, sys),
+            Callee::Identifier(identifier) => identifier.eval(env, sys),
         }
     }
 }
 
 impl Eval for Statement {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         match self {
             Statement::LetStatement(let_stmt) => {
-                let value = let_stmt.value.eval(env)?;
+                let value = let_stmt.value.eval(env, sys)?;
                 Ok(env.set(let_stmt.name.to_string(), value))
             }
-            Statement::ReturnStatement(return_stmt) => {
-                Ok(Object::Return(return_stmt.return_value.eval(env)?.into()))
-            }
-            Statement::ExpressionStatement(expr_stmt) => expr_stmt.eval(env),
+            Statement::ReturnStatement(return_stmt) => Ok(Object::Return(
+                return_stmt.return_value.eval(env, sys)?.into(),
+            )),
+            Statement::ExpressionStatement(expr_stmt) => expr_stmt.eval(env, sys),
         }
     }
 }
 
 impl Eval for Program {
-    fn eval(&self, env: &mut Environment) -> Result<Object> {
+    fn eval<S: System>(&self, env: &mut Environment, sys: &mut S) -> Result<Object> {
         let mut result = Object::Null;
         for stmt in &self.statements {
-            match stmt.eval(env)? {
+            match stmt.eval(env, sys)? {
                 Object::Return(content) => return Ok(*content),
                 obj => result = obj,
             }
@@ -424,7 +470,7 @@ impl Eval for Program {
 #[cfg(test)]
 mod tests {
 
-    use crate::{lexer::Lexer, object::HashObject, parser::Parser};
+    use crate::{lexer::Lexer, parser::Parser};
 
     use super::*;
 
@@ -769,7 +815,7 @@ mod tests {
             let err = p
                 .parse_program()
                 .unwrap()
-                .eval(&mut env)
+                .eval(&mut env, &mut InMemorySystem::new())
                 .expect_err(&format!("{} did not error as expected", src))
                 .to_string();
             assert_eq!(
@@ -786,7 +832,9 @@ mod tests {
             let l = Lexer::new(src);
             let mut p = Parser::new(l);
             assert_eq!(
-                p.parse_program().unwrap().eval(&mut env)?,
+                p.parse_program()
+                    .unwrap()
+                    .eval(&mut env, &mut InMemorySystem::new())?,
                 result,
                 "src {} was not equal to result {}",
                 src,
